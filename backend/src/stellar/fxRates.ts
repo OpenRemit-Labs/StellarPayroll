@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { config } from '../config';
 
 export interface FXRates {
   USD: number;
@@ -8,43 +7,80 @@ export interface FXRates {
   GBP: number;
 }
 
-const MOCK_RATES: Record<'XLM' | 'USDC', FXRates> = {
+export interface AllFXRates {
+  XLM: FXRates;
+  USDC: FXRates;
+  stale: boolean;
+}
+
+const FALLBACK_RATES: Record<'XLM' | 'USDC', FXRates> = {
   XLM: { USD: 0.11, NGN: 180, EUR: 0.10, GBP: 0.087 },
   USDC: { USD: 1.0, NGN: 1650, EUR: 0.92, GBP: 0.79 },
 };
 
+const CACHE_TTL_MS = 60_000;
+
+interface CacheEntry {
+  xlm: FXRates;
+  usdc: FXRates;
+  fetchedAt: number;
+  stale: boolean;
+}
+
+let cache: CacheEntry | null = null;
+
 export class FXService {
-  async getRates(baseCurrency: 'XLM' | 'USDC'): Promise<FXRates> {
-    if (config.stellarNetwork === 'testnet') {
-      return MOCK_RATES[baseCurrency];
+  private async fetchFromCoinGecko(): Promise<{ xlm: FXRates; usdc: FXRates }> {
+    const { data } = await axios.get(
+      'https://api.coingecko.com/api/v3/simple/price',
+      {
+        params: { ids: 'stellar,usd-coin', vs_currencies: 'usd,ngn,eur,gbp' },
+        timeout: 5000,
+      }
+    );
+
+    const xlm = data['stellar'] ?? {};
+    const usdc = data['usd-coin'] ?? {};
+
+    return {
+      xlm: {
+        USD: xlm.usd ?? FALLBACK_RATES.XLM.USD,
+        NGN: xlm.ngn ?? FALLBACK_RATES.XLM.NGN,
+        EUR: xlm.eur ?? FALLBACK_RATES.XLM.EUR,
+        GBP: xlm.gbp ?? FALLBACK_RATES.XLM.GBP,
+      },
+      usdc: {
+        USD: usdc.usd ?? FALLBACK_RATES.USDC.USD,
+        NGN: usdc.ngn ?? FALLBACK_RATES.USDC.NGN,
+        EUR: usdc.eur ?? FALLBACK_RATES.USDC.EUR,
+        GBP: usdc.gbp ?? FALLBACK_RATES.USDC.GBP,
+      },
+    };
+  }
+
+  async getAllRates(): Promise<AllFXRates> {
+    const now = Date.now();
+
+    if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
+      return { XLM: cache.xlm, USDC: cache.usdc, stale: cache.stale };
     }
 
     try {
-      // For USDC (pegged to USD), use USD as base
-      const base = baseCurrency === 'USDC' ? 'USD' : 'XLM';
-      const { data } = await axios.get(`${config.fxApiUrl}/${base}`, { timeout: 5000 });
-      const rates = data.rates as Record<string, number>;
-
-      if (baseCurrency === 'USDC') {
-        return {
-          USD: 1.0,
-          NGN: rates.NGN || MOCK_RATES.USDC.NGN,
-          EUR: rates.EUR || MOCK_RATES.USDC.EUR,
-          GBP: rates.GBP || MOCK_RATES.USDC.GBP,
-        };
-      }
-
-      // XLM: get XLM/USD price then derive others
-      const xlmUsd = MOCK_RATES.XLM.USD; // fallback
-      return {
-        USD: xlmUsd,
-        NGN: xlmUsd * (rates.NGN || 1500),
-        EUR: xlmUsd * (rates.EUR || 0.92),
-        GBP: xlmUsd * (rates.GBP || 0.79),
-      };
+      const { xlm, usdc } = await this.fetchFromCoinGecko();
+      cache = { xlm, usdc, fetchedAt: now, stale: false };
+      return { XLM: xlm, USDC: usdc, stale: false };
     } catch {
-      return MOCK_RATES[baseCurrency];
+      if (cache) {
+        cache = { ...cache, stale: true };
+        return { XLM: cache.xlm, USDC: cache.usdc, stale: true };
+      }
+      return { XLM: FALLBACK_RATES.XLM, USDC: FALLBACK_RATES.USDC, stale: true };
     }
+  }
+
+  async getRates(baseCurrency: 'XLM' | 'USDC'): Promise<FXRates> {
+    const all = await this.getAllRates();
+    return all[baseCurrency];
   }
 }
 

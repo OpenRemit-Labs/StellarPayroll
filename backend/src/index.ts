@@ -6,6 +6,7 @@ import organizationsRouter from './routes/organizations';
 import employeesRouter from './routes/employees';
 import payrollsRouter from './routes/payrolls';
 import transactionsRouter from './routes/transactions';
+import fxRouter from './routes/fx';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 const app = express();
@@ -20,6 +21,7 @@ app.use('/api/organizations', organizationsRouter);
 app.use('/api/employees', employeesRouter);
 app.use('/api/payrolls', payrollsRouter);
 app.use('/api/transactions', transactionsRouter);
+app.use('/api/fx', fxRouter);
 
 app.use(notFound);
 app.use(errorHandler);
