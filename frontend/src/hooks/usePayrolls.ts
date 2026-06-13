@@ -46,3 +46,16 @@ export function useExecutePayroll() {
     },
   });
 }
+
+export function useExecutePayrollXDR() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, signedXDR }: { id: string; signedXDR: string }) =>
+      payrollsApi.executeXDR(id, signedXDR),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['payroll', id] });
+      qc.invalidateQueries({ queryKey: ['payrolls'] });
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+    },
+  });
+}

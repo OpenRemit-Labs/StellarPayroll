@@ -1,10 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, ChevronLeft, Plus, Trash2, Loader2, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import {
+  ChevronRight, ChevronLeft, Plus, Trash2, Loader2,
+  AlertTriangle, CheckCircle, XCircle, Wallet,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
+import { signTransaction } from '@stellar/freighter-api';
 import { useAppStore } from '../store/useAppStore';
 import { useEmployees } from '../hooks/useEmployees';
-import { useCreatePayroll, useExecutePayroll } from '../hooks/usePayrolls';
+import { useCreatePayroll, useExecutePayroll, useExecutePayrollXDR } from '../hooks/usePayrolls';
+import { payrollsApi } from '../api/payrolls';
+import { fxApi, AllFXRates } from '../api/fx';
 import { Employee, ExecuteResult } from '../types';
 
 interface PayrollLine {
@@ -13,14 +19,17 @@ interface PayrollLine {
 }
 
 const STEPS = ['Details', 'Recipients', 'Review', 'Execute'];
+const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
 
 export default function CreatePayroll() {
   const navigate = useNavigate();
   const org = useAppStore((s) => s.currentOrg);
+  const freighterPublicKey = useAppStore((s) => s.freighterPublicKey);
   const orgId = org?.id || '';
   const { data: employees = [] } = useEmployees(orgId);
   const createMutation = useCreatePayroll(orgId);
   const executeMutation = useExecutePayroll();
+  const executeXDRMutation = useExecutePayrollXDR();
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
@@ -31,11 +40,21 @@ export default function CreatePayroll() {
   const [payrollId, setPayrollId] = useState('');
   const [secretKey, setSecretKey] = useState('');
   const [result, setResult] = useState<ExecuteResult | null>(null);
+  const [fxRates, setFxRates] = useState<AllFXRates | null>(null);
+  const [freighterSigning, setFreighterSigning] = useState(false);
+
+  useEffect(() => {
+    if (step === 2) {
+      fxApi.getRates().then(setFxRates).catch(() => {});
+    }
+  }, [step]);
 
   if (!org) return <p className="text-sm text-gray-500">Create an organization first.</p>;
 
   const total = lines.reduce((s, l) => s + parseFloat(l.amount || '0'), 0);
   const estimatedFee = lines.length * 0.00001;
+  const fxRate = fxRates ? fxRates[currency].USD : null;
+  const totalUSD = fxRate ? total * fxRate : null;
 
   const addLine = () => {
     const emp = employees.find((e) => e.id === selectedEmpId);
@@ -78,6 +97,27 @@ export default function CreatePayroll() {
       toast.error(err.message);
     }
   };
+
+  const handleFreighterExecute = async () => {
+    if (!freighterPublicKey || !payrollId) return;
+    setFreighterSigning(true);
+    try {
+      const { xdr } = await payrollsApi.getXDR(payrollId, freighterPublicKey);
+      const signed = await signTransaction(xdr, { networkPassphrase: TESTNET_PASSPHRASE });
+      if (signed.error) throw new Error(signed.error.message || 'Freighter signing failed');
+
+      const res = await executeXDRMutation.mutateAsync({ id: payrollId, signedXDR: signed.signedTxXdr });
+      setResult(res);
+      if (res.failCount === 0) toast.success('Payroll executed successfully!');
+      else toast.error(`${res.failCount} payment(s) failed`);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setFreighterSigning(false);
+    }
+  };
+
+  const isExecuting = executeMutation.isPending || executeXDRMutation.isPending || freighterSigning;
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -213,7 +253,15 @@ export default function CreatePayroll() {
             </div>
             <div className="border-t border-gray-200 pt-2 flex justify-between text-sm font-semibold">
               <span>Total</span>
-              <span className="font-mono">{total.toFixed(7)} {currency}</span>
+              <div className="text-right">
+                <span className="font-mono">{total.toFixed(7)} {currency}</span>
+                {totalUSD !== null && (
+                  <span className="block text-xs font-normal text-gray-400">
+                    ≈ ${totalUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                    {fxRates?.stale && <span className="ml-1 text-amber-500">(stale rate)</span>}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex justify-between text-xs text-gray-400">
               <span>Estimated network fee</span>
@@ -253,24 +301,6 @@ export default function CreatePayroll() {
         <div className="card p-6 space-y-4">
           <h2 className="text-sm font-semibold text-gray-900">Execute Payroll</h2>
 
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2 text-xs text-amber-800">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>Your secret key is used only for signing this transaction. It is never stored or transmitted to our servers.</span>
-          </div>
-
-          <div>
-            <label className="label">Source Wallet Secret Key *</label>
-            <input
-              className="input font-mono text-xs"
-              type="password"
-              value={secretKey}
-              onChange={(e) => setSecretKey(e.target.value)}
-              placeholder="S..."
-              autoComplete="off"
-            />
-            <p className="mt-1 text-xs text-gray-400">The Stellar secret key of the wallet funding this payroll.</p>
-          </div>
-
           <div className="bg-gray-50 rounded-lg p-3 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">Sending to</span>
@@ -282,17 +312,65 @@ export default function CreatePayroll() {
             </div>
           </div>
 
-          <button
-            onClick={handleExecute}
-            disabled={!secretKey || executeMutation.isPending}
-            className="btn-primary w-full justify-center py-3"
-          >
-            {executeMutation.isPending ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Processing payments…</>
-            ) : (
-              'Execute Payroll'
-            )}
-          </button>
+          {freighterPublicKey ? (
+            <div className="space-y-3">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex gap-2 text-xs text-emerald-800">
+                <Wallet className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium">Freighter connected</p>
+                  <p className="font-mono text-emerald-700 mt-0.5">
+                    {freighterPublicKey.slice(0, 8)}…{freighterPublicKey.slice(-6)}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleFreighterExecute}
+                disabled={isExecuting}
+                className="btn-primary w-full justify-center py-3"
+              >
+                {isExecuting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</>
+                ) : (
+                  <><Wallet className="w-4 h-4" /> Sign & Execute with Freighter</>
+                )}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2 text-xs text-amber-800">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>Your secret key is used only for signing this transaction. It is never stored or transmitted to our servers.</span>
+              </div>
+
+              <div>
+                <label className="label">Source Wallet Secret Key *</label>
+                <input
+                  className="input font-mono text-xs"
+                  type="password"
+                  value={secretKey}
+                  onChange={(e) => setSecretKey(e.target.value)}
+                  placeholder="S..."
+                  autoComplete="off"
+                />
+                <p className="mt-1 text-xs text-gray-400">
+                  The Stellar secret key of the wallet funding this payroll. Or{' '}
+                  <a href="/settings" className="text-indigo-600 hover:underline">connect Freighter</a> to sign without entering your key.
+                </p>
+              </div>
+
+              <button
+                onClick={handleExecute}
+                disabled={!secretKey || isExecuting}
+                className="btn-primary w-full justify-center py-3"
+              >
+                {isExecuting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Processing payments…</>
+                ) : (
+                  'Execute Payroll'
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -318,42 +396,36 @@ export default function CreatePayroll() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                <th className="table-th">Employee</th>
+                <th className="table-th">Item</th>
                 <th className="table-th">Status</th>
                 <th className="table-th">TX Hash</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {result.results.map((r) => {
-                const line = lines.find((l) => {
-                  // match by payrollItemId isn't available here, show all
-                  return true;
-                });
-                return (
-                  <tr key={r.payrollItemId}>
-                    <td className="table-td text-gray-500 font-mono text-xs">{r.payrollItemId.slice(0, 8)}…</td>
-                    <td className="table-td">
-                      {r.success ? (
-                        <span className="text-emerald-600 text-xs font-medium">✓ Success</span>
-                      ) : (
-                        <span className="text-red-500 text-xs">{r.error}</span>
-                      )}
-                    </td>
-                    <td className="table-td font-mono text-xs">
-                      {r.txHash ? (
-                        <a
-                          href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:underline"
-                        >
-                          {r.txHash.slice(0, 10)}…
-                        </a>
-                      ) : '—'}
-                    </td>
-                  </tr>
-                );
-              })}
+              {result.results.map((r) => (
+                <tr key={r.payrollItemId}>
+                  <td className="table-td text-gray-500 font-mono text-xs">{r.payrollItemId.slice(0, 8)}…</td>
+                  <td className="table-td">
+                    {r.success ? (
+                      <span className="text-emerald-600 text-xs font-medium">✓ Success</span>
+                    ) : (
+                      <span className="text-red-500 text-xs">{r.error}</span>
+                    )}
+                  </td>
+                  <td className="table-td font-mono text-xs">
+                    {r.txHash ? (
+                      <a
+                        href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-600 hover:underline"
+                      >
+                        {r.txHash.slice(0, 10)}…
+                      </a>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
 

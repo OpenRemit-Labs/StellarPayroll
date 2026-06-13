@@ -1,5 +1,6 @@
 import {
   Keypair,
+  Transaction,
   TransactionBuilder,
   Operation,
   Asset,
@@ -161,6 +162,46 @@ export class BulkPayoutEngine {
     }
 
     return results;
+  }
+
+  async buildUnsignedXDR(
+    sourcePublicKey: string,
+    recipients: PayoutRecipient[],
+    payrollId: string,
+    memo?: string
+  ): Promise<string> {
+    const network = stellarClient.getNetwork();
+    const sourceAccount = await stellarClient.getAccount(sourcePublicKey);
+    const fee = await stellarClient.fetchBaseFee();
+
+    const memoText = (memo || payrollId).substring(0, 28);
+    const txBuilder = new TransactionBuilder(sourceAccount, { fee, networkPassphrase: network })
+      .addMemo(Memo.text(memoText))
+      .setTimeout(180);
+
+    for (const recipient of recipients) {
+      const asset = recipient.currency === 'USDC'
+        ? stellarClient.getUSDCAsset()
+        : stellarClient.getNativeAsset();
+
+      txBuilder.addOperation(
+        Operation.payment({
+          destination: recipient.walletAddress,
+          asset,
+          amount: recipient.amount,
+        })
+      );
+    }
+
+    return txBuilder.build().toXDR();
+  }
+
+  async submitSignedXDR(signedXDR: string): Promise<{ hash: string; ledger: number }> {
+    const server = stellarClient.getServer();
+    const network = stellarClient.getNetwork();
+    const tx = new Transaction(signedXDR, network);
+    const response = await server.submitTransaction(tx);
+    return { hash: response.hash, ledger: (response as any).ledger as number };
   }
 }
 

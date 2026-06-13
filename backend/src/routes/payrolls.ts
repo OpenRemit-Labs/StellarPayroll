@@ -191,4 +191,132 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/payrolls/:id/xdr — build unsigned XDR for Freighter signing
+router.get('/:id/xdr', async (req: Request, res: Response) => {
+  const { sourcePublicKey } = req.query as { sourcePublicKey?: string };
+  if (!sourcePublicKey) {
+    return res.status(400).json({ error: 'sourcePublicKey query param is required' });
+  }
+
+  const { rows: [payroll] } = await db.query('SELECT * FROM payrolls WHERE id = $1', [req.params.id]);
+  if (!payroll) return res.status(404).json({ error: 'Payroll not found' });
+  if (payroll.status === 'completed') {
+    return res.status(400).json({ error: 'Payroll already completed' });
+  }
+
+  const { rows: items } = await db.query(
+    `SELECT pi.*, e.wallet_address
+     FROM payroll_items pi JOIN employees e ON e.id = pi.employee_id
+     WHERE pi.payroll_id = $1 AND pi.status = 'pending'`,
+    [payroll.id]
+  );
+
+  if (!items.length) {
+    return res.status(400).json({ error: 'No pending items to process' });
+  }
+
+  const recipients = items.map((item: any) => ({
+    walletAddress: item.wallet_address,
+    amount: item.amount.toString(),
+    currency: item.currency as 'XLM' | 'USDC',
+    employeeId: item.employee_id,
+    payrollItemId: item.id,
+  }));
+
+  try {
+    const xdr = await bulkPayoutEngine.buildUnsignedXDR(
+      sourcePublicKey,
+      recipients,
+      payroll.id,
+      `PAY-${payroll.id.substring(0, 20)}`
+    );
+    return res.json({ xdr, payrollItemIds: items.map((i: any) => i.id) });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/payrolls/:id/execute-xdr — submit a Freighter-signed XDR
+router.post('/:id/execute-xdr', async (req: Request, res: Response) => {
+  const { signedXDR } = req.body;
+  if (!signedXDR) {
+    return res.status(400).json({ error: 'signedXDR is required' });
+  }
+
+  const { rows: [payroll] } = await db.query('SELECT * FROM payrolls WHERE id = $1', [req.params.id]);
+  if (!payroll) return res.status(404).json({ error: 'Payroll not found' });
+  if (payroll.status === 'completed') {
+    return res.status(400).json({ error: 'Payroll already completed' });
+  }
+
+  await db.query("UPDATE payrolls SET status = 'processing' WHERE id = $1", [payroll.id]);
+
+  const { rows: items } = await db.query(
+    `SELECT pi.id FROM payroll_items pi WHERE pi.payroll_id = $1 AND pi.status = 'pending'`,
+    [payroll.id]
+  );
+
+  if (!items.length) {
+    return res.status(400).json({ error: 'No pending items to process' });
+  }
+
+  try {
+    const { hash: txHash, ledger } = await bulkPayoutEngine.submitSignedXDR(signedXDR);
+
+    for (const item of items) {
+      await db.query(
+        "UPDATE payroll_items SET status = 'success', tx_hash = $1 WHERE id = $2",
+        [txHash, item.id]
+      );
+    }
+
+    await db.query(
+      'INSERT INTO transactions (org_id, payroll_id, stellar_tx_hash, ledger, status) VALUES ($1,$2,$3,$4,$5)',
+      [payroll.org_id, payroll.id, txHash, ledger || null, 'success']
+    );
+
+    await db.query(
+      "UPDATE payrolls SET status = 'completed', executed_at = NOW() WHERE id = $1",
+      [payroll.id]
+    );
+
+    const results = items.map((item: any) => ({
+      payrollItemId: item.id,
+      success: true,
+      txHash,
+      ledger,
+    }));
+
+    return res.json({
+      payrollId: payroll.id,
+      status: 'completed',
+      successCount: items.length,
+      failCount: 0,
+      results,
+    });
+  } catch (err: any) {
+    for (const item of items) {
+      await db.query(
+        "UPDATE payroll_items SET status = 'failed', error_message = $1 WHERE id = $2",
+        [err.message, item.id]
+      );
+    }
+    await db.query("UPDATE payrolls SET status = 'failed' WHERE id = $1", [payroll.id]);
+
+    const results = items.map((item: any) => ({
+      payrollItemId: item.id,
+      success: false,
+      error: err.message,
+    }));
+
+    return res.json({
+      payrollId: payroll.id,
+      status: 'failed',
+      successCount: 0,
+      failCount: items.length,
+      results,
+    });
+  }
+});
+
 export default router;

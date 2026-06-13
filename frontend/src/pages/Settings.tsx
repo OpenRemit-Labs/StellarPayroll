@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { Loader2, ExternalLink } from 'lucide-react';
+import { Loader2, ExternalLink, Wallet, CheckCircle, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { isConnected, requestAccess, getAddress } from '@stellar/freighter-api';
 import { useAppStore } from '../store/useAppStore';
 import { organizationsApi } from '../api/organizations';
 
 export default function Settings() {
-  const { currentOrg, setCurrentOrg } = useAppStore();
+  const { currentOrg, setCurrentOrg, freighterPublicKey, setFreighterPublicKey } = useAppStore();
   const [name, setName] = useState('');
   const [wallet, setWallet] = useState('');
   const [loading, setLoading] = useState(false);
+  const [freighterLoading, setFreighterLoading] = useState(false);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,9 +27,128 @@ export default function Settings() {
     }
   };
 
+  const connectFreighter = async () => {
+    setFreighterLoading(true);
+    try {
+      const connStatus = await isConnected();
+      if (!connStatus.isConnected) {
+        toast.error(
+          <span>
+            Freighter is not installed.{' '}
+            <a
+              href="https://www.freighter.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              Install it here
+            </a>
+          </span>
+        );
+        return;
+      }
+
+      const accessRes = await requestAccess();
+      if (accessRes.error) {
+        toast.error(accessRes.error.message || 'Freighter access denied');
+        return;
+      }
+
+      setFreighterPublicKey(accessRes.address);
+      toast.success('Freighter connected!');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to connect Freighter');
+    } finally {
+      setFreighterLoading(false);
+    }
+  };
+
+  const recheckFreighter = async () => {
+    setFreighterLoading(true);
+    try {
+      const res = await getAddress();
+      if (res.error || !res.address) {
+        setFreighterPublicKey(null);
+        toast('Freighter disconnected');
+      } else {
+        setFreighterPublicKey(res.address);
+        toast.success('Freighter still connected');
+      }
+    } catch {
+      setFreighterPublicKey(null);
+    } finally {
+      setFreighterLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-lg space-y-6">
       <h1 className="text-xl font-bold text-gray-900">Settings</h1>
+
+      {/* Freighter Wallet */}
+      <div className="card p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Wallet className="w-4 h-4 text-indigo-600" />
+          <h2 className="text-sm font-semibold text-gray-900">Freighter Wallet</h2>
+        </div>
+
+        {freighterPublicKey ? (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+              <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-emerald-800">Connected</p>
+                <p className="text-xs font-mono text-emerald-700 break-all">{freighterPublicKey}</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={recheckFreighter}
+                disabled={freighterLoading}
+                className="btn-secondary text-xs"
+              >
+                {freighterLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                Recheck
+              </button>
+              <button
+                onClick={() => setFreighterPublicKey(null)}
+                className="text-xs text-red-500 hover:text-red-700"
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500">
+              Connect Freighter to sign payroll transactions without exposing your secret key.
+            </p>
+            <button
+              onClick={connectFreighter}
+              disabled={freighterLoading}
+              className="btn-primary w-full justify-center"
+            >
+              {freighterLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Wallet className="w-4 h-4" />
+              )}
+              Connect Freighter
+            </button>
+            <p className="text-xs text-gray-400">
+              Don't have Freighter?{' '}
+              <a
+                href="https://www.freighter.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-indigo-600 hover:underline"
+              >
+                Install the browser extension
+              </a>
+            </p>
+          </div>
+        )}
+      </div>
 
       {currentOrg ? (
         <div className="card p-6 space-y-4">
@@ -82,7 +203,10 @@ export default function Settings() {
             <div>
               <label className="label">Owner Stellar Wallet Address *</label>
               <input className="input font-mono text-xs" required value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="G..." />
-              <p className="mt-1 text-xs text-gray-400">Your Stellar public key (starts with G). Get one at <a href="https://laboratory.stellar.org" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">Stellar Laboratory</a>.</p>
+              <p className="mt-1 text-xs text-gray-400">
+                Your Stellar public key (starts with G). Get one at{' '}
+                <a href="https://laboratory.stellar.org" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">Stellar Laboratory</a>.
+              </p>
             </div>
             <button type="submit" disabled={loading} className="btn-primary w-full justify-center">
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}

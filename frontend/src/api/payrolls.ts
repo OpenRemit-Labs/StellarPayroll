@@ -25,6 +25,17 @@ export const payrollsApi = {
     const res = await apiClient.post<ExecuteResult>(`/payrolls/${id}/execute`, { sourceSecretKey });
     return res.data;
   },
+  getXDR: async (id: string, sourcePublicKey: string) => {
+    const res = await apiClient.get<{ xdr: string; payrollItemIds: string[] }>(
+      `/payrolls/${id}/xdr`,
+      { params: { sourcePublicKey } }
+    );
+    return res.data;
+  },
+  executeXDR: async (id: string, signedXDR: string) => {
+    const res = await apiClient.post<ExecuteResult>(`/payrolls/${id}/execute-xdr`, { signedXDR });
+    return res.data;
+  },
 };
 
 export const transactionsApi = {
