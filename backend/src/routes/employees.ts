@@ -19,6 +19,8 @@ router.get('/org/:orgId', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'page and limit must be positive integers' });
   }
 
+  const clampedLimit = Math.min(limit, MAX_LIMIT);
+
   const { rows } = await db.query(
     'SELECT * FROM employees WHERE org_id = $1 ORDER BY created_at DESC',
     [req.params.orgId]
