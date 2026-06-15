@@ -21,6 +21,12 @@ router.get('/org/:orgId', async (req: Request, res: Response) => {
 
   const clampedLimit = Math.min(limit, MAX_LIMIT);
 
+  const { rows: countRows } = await db.query(
+    'SELECT COUNT(*)::int AS total FROM employees WHERE org_id = $1',
+    [req.params.orgId]
+  );
+  const total: number = countRows[0].total;
+
   const { rows } = await db.query(
     'SELECT * FROM employees WHERE org_id = $1 ORDER BY created_at DESC',
     [req.params.orgId]
