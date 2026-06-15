@@ -2,6 +2,10 @@ import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { db } from '../db/client';
 
+const DEFAULT_PAGE = 1;
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
 const router = Router();
 
 // GET /api/employees/org/:orgId
