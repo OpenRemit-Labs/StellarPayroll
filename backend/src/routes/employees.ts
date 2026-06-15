@@ -32,7 +32,7 @@ router.get('/org/:orgId', async (req: Request, res: Response) => {
     'SELECT * FROM employees WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
     [req.params.orgId, clampedLimit, offset]
   );
-  return res.json(rows);
+  return res.json({ data: rows, total, page, limit: clampedLimit });
 });
 
 // POST /api/employees/org/:orgId
