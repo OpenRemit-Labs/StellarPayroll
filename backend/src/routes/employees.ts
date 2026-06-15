@@ -27,9 +27,10 @@ router.get('/org/:orgId', async (req: Request, res: Response) => {
   );
   const total: number = countRows[0].total;
 
+  const offset = (page - 1) * clampedLimit;
   const { rows } = await db.query(
-    'SELECT * FROM employees WHERE org_id = $1 ORDER BY created_at DESC',
-    [req.params.orgId]
+    'SELECT * FROM employees WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+    [req.params.orgId, clampedLimit, offset]
   );
   return res.json(rows);
 });
