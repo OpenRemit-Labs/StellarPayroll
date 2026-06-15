@@ -15,6 +15,10 @@ router.get('/org/:orgId', async (req: Request, res: Response) => {
   const page = Number(rawPage);
   const limit = Number(rawLimit);
 
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1) {
+    return res.status(400).json({ error: 'page and limit must be positive integers' });
+  }
+
   const { rows } = await db.query(
     'SELECT * FROM employees WHERE org_id = $1 ORDER BY created_at DESC',
     [req.params.orgId]
