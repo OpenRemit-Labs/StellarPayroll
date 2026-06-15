@@ -10,6 +10,11 @@ const router = Router();
 
 // GET /api/employees/org/:orgId
 router.get('/org/:orgId', async (req: Request, res: Response) => {
+  const rawPage = req.query.page ?? DEFAULT_PAGE;
+  const rawLimit = req.query.limit ?? DEFAULT_LIMIT;
+  const page = Number(rawPage);
+  const limit = Number(rawLimit);
+
   const { rows } = await db.query(
     'SELECT * FROM employees WHERE org_id = $1 ORDER BY created_at DESC',
     [req.params.orgId]
