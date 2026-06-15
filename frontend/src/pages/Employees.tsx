@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Plus, Upload, Trash2, Loader2, Download, X, AlertCircle, CheckCircle } from 'lucide-react';
+import { Plus, Upload, Trash2, Loader2, Download, X, AlertCircle, CheckCircle, Copy } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { useAppStore } from '../store/useAppStore';
@@ -250,7 +250,21 @@ export default function Employees() {
                 <tr key={emp.id} className="hover:bg-gray-50">
                   <td className="table-td font-medium text-gray-900">{emp.name}</td>
                   <td className="table-td text-gray-500">{emp.email || '—'}</td>
-                  <td className="table-td font-mono text-xs text-gray-500">{truncateAddress(emp.wallet_address)}</td>
+                  <td className="table-td font-mono text-xs text-gray-500">
+                    <span className="flex items-center gap-1.5">
+                      {truncateAddress(emp.wallet_address)}
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(emp.wallet_address);
+                          toast.success('Copied!');
+                        }}
+                        className="text-gray-400 hover:text-gray-600 transition-colors"
+                        title="Copy wallet address"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </span>
+                  </td>
                   <td className="table-td">
                     <span className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">{emp.currency}</span>
                   </td>

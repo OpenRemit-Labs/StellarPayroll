@@ -17,7 +17,7 @@ export default function Dashboard() {
     enabled: !!org,
   });
 
-  const { data: payrolls } = useQuery({
+  const { data: payrolls, isLoading: payrollsLoading } = useQuery({
     queryKey: ['payrolls', org?.id],
     queryFn: () => payrollsApi.list(org!.id),
     enabled: !!org,
@@ -88,7 +88,32 @@ export default function Dashboard() {
             New payroll →
           </Link>
         </div>
-        {recentPayrolls.length === 0 ? (
+        {payrollsLoading ? (
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>
+                <th className="table-th">Name</th>
+                <th className="table-th">Currency</th>
+                <th className="table-th">Total</th>
+                <th className="table-th">Status</th>
+                <th className="table-th">Date</th>
+                <th className="table-th" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <tr key={i}>
+                  <td className="table-td"><div className="h-3.5 bg-gray-200 rounded animate-pulse w-28" /></td>
+                  <td className="table-td"><div className="h-3.5 bg-gray-200 rounded animate-pulse w-12" /></td>
+                  <td className="table-td"><div className="h-3.5 bg-gray-200 rounded animate-pulse w-16" /></td>
+                  <td className="table-td"><div className="h-3.5 bg-gray-200 rounded animate-pulse w-20" /></td>
+                  <td className="table-td"><div className="h-3.5 bg-gray-200 rounded animate-pulse w-20" /></td>
+                  <td className="table-td" />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : recentPayrolls.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-gray-400">
             No payrolls yet.{' '}
             <Link to="/payrolls/new" className="text-indigo-600 hover:underline">
